@@ -13,8 +13,11 @@ import torchvision.transforms as transforms
 
 # TODO: Datasets go here.
 
-def get_dataloaders(dataset, batch_size=64):
-    transform = transforms.Compose([
+def get_dataloaders(dataset, model_name="lenet", batch_size=64):
+    if not model_name.startswith("lenet"):
+        transform = transforms.Compose([transforms.ToTensor()])
+    else:
+        transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Lambda(lambda x: x.view(-1))  # Flatten the images
     ])
@@ -50,7 +53,7 @@ def get_dataloaders(dataset, batch_size=64):
 
 def create_lenet(image_size=28):
     return torch.nn.Sequential(
-        torch.nn.Linear(image_size**2, 300),
+        torch.nn.Linear(int(image_size**2), 300),
         torch.nn.ReLU(),
         torch.nn.Linear(300, 100),
         torch.nn.ReLU(),
@@ -128,7 +131,7 @@ class ResidualBlock(torch.nn.Module):
 
 def create_resnet_18(image_size=32):
     return torch.nn.Sequential(
-        torch.nn.Conv2d(1, 16, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
+        torch.nn.Conv2d(3, 16, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
 
         ResidualBlock(16, 16),
         ResidualBlock(16, 16),
@@ -148,7 +151,7 @@ def create_resnet_18(image_size=32):
 
 def create_vgg_19(image_size=32):
     return torch.nn.Sequential(
-        torch.nn.Conv2d(1, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
+        torch.nn.Conv2d(3, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
         torch.nn.Conv2d(64, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
         torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
 
@@ -200,7 +203,7 @@ def create_network(arch, **kwargs):
 # Training and testing loops
 # -----------------------------------------------------------------------------
 
-def accuracy(model, epoch_stats, datasets, loss_fn):
+def record_metrics(model, epoch_stats, datasets, loss_fn):
     with torch.no_grad():
         for name, dataset in datasets.items():
             eval_metric = d2l.Accumulator(2)
@@ -213,9 +216,12 @@ def accuracy(model, epoch_stats, datasets, loss_fn):
             epoch_stats[name + "_acc"].append(d2l.evaluate_accuracy_gpu(model, dataset))
             eval_metric.reset()
 
-def train(model_name, dataset, optimizer, batch_size=64, lr=0.01, epochs=100, device="cuda", momentum=0):
-    train, valid, test = get_dataloaders(dataset, batch_size)
-    image_size = len(train.dataset.getitem(0)[0])**(1/2)
+def train(model_name: str, dataset, optimizer, batch_size=64, lr=0.01, epochs=100, device="cuda", momentum=0, plot=True):
+    train, valid, test = get_dataloaders(dataset, model_name, batch_size)
+    if dataset=="CIFAR10":
+        image_size=32
+    else:
+        image_size=28
     model = create_network(model_name, image_size=image_size)
     model.to(device)
     
@@ -225,17 +231,16 @@ def train(model_name, dataset, optimizer, batch_size=64, lr=0.01, epochs=100, de
     elif optimizer=="sgd":
         optimizer=torch.optim.SGD(model.parameters(), lr, momentum)
     else:
-        return Exception("Optimizer should be adam or sgd")
+        raise Exception("Optimizer should be adam or sgd")
     loss_fn = torch.nn.CrossEntropyLoss()
-
-    path = f"checkpoints/{model_name}_{dataset}_{lr}_0.pth"
-    torch.save(model, path)
     
     datasets = {"valid": valid, "test": test, "train": train}
-    
     epoch_stats = {"train_loss": [], "valid_loss": [], "test_loss": [], "train_acc": [], "valid_acc": [], "test_acc": []}
+    
     record_metrics(model, epoch_stats, datasets, loss_fn)
-
+    path = f"checkpoints/{model_name}_{dataset}_{lr}_0.pth"
+    torch.save({"model": model, "epoch_stats": epoch_stats}, path)
+    
     for epoch in range(1, epochs+1):
         model.train()
 

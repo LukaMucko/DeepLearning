@@ -15,7 +15,8 @@ image_size = len(train.dataset.__getitem__(0)[0])**(1/2)
 
 net = create_network("lenet", image_size=image_size)
 
-def accuracy(model, epoch_stats, datasets, loss_fn):
+device=d2l.try_gpu()
+def record_metrics(model, epoch_stats, datasets, loss_fn):
     with torch.no_grad():
         for name, dataset in datasets.items():
             eval_metric = d2l.Accumulator(2)
@@ -28,9 +29,12 @@ def accuracy(model, epoch_stats, datasets, loss_fn):
             epoch_stats[name + "_acc"].append(d2l.evaluate_accuracy_gpu(model, dataset))
             eval_metric.reset()
 
-def simple_train(model_name, dataset, optimizer, batch_size=64, lr=0.01, epochs=100, device="cuda", momentum=0, plot=True):
-    train, valid, test = get_dataloaders(dataset, batch_size)
-    image_size = int(len(train.dataset.getitem(0)[0])**(1/2))
+def simple_train(model_name: str, dataset: str, optimizer: str, batch_size=64, lr=0.01, epochs=100, device=device, momentum=0, plot=True):
+    train, valid, test = get_dataloaders(dataset, model_name, batch_size)
+    if dataset=="CIFAR10":
+        image_size=32
+    else:
+        image_size=28
     model = create_network(model_name, image_size=image_size)
     model.to(device)
     
@@ -53,10 +57,11 @@ def simple_train(model_name, dataset, optimizer, batch_size=64, lr=0.01, epochs=
 
     if plot:
         animator = d2l.Animator(xlabel='epoch', xlim=[1, epochs], figsize=(10, 5),
-                                legend=['train loss', 'train accuracy', 'test loss', 'test accuracy'])
-    for epoch in range(1, epochs+1):
+                                legend=['train loss', 'train accuracy', "valid_loss", "valid_acc", 'test loss', 'test accuracy'])
+        animator.add(0, (epoch_stats["train_loss"][-1], epoch_stats["train_acc"][-1], epoch_stats["valid_loss"][-1], epoch_stats["valid_acc"][-1], epoch_stats["test_loss"][-1], epoch_stats["test_acc"][-1]))
+                               
+    for epoch in range(1, epochs+1):        
         model.train()
-
         for i, (x, y) in enumerate(train):
             optimizer.zero_grad()
             x, y= x.to(device), y.to(device, torch.long)
@@ -65,12 +70,11 @@ def simple_train(model_name, dataset, optimizer, batch_size=64, lr=0.01, epochs=
             loss.backward()
             optimizer.step()
         
-        if epoch % 10 ==0:
-            #path = f"checkpoints/{model_name}_{dataset}_{lr}_{epoch}.pth"
-            record_metrics(model, epoch_stats, datasets, loss_fn)
-            #torch.save({"model": model, "epoch_stats": epoch_stats}, path)
-            if plot:
-                animator.add(epoch + 1, (epoch_stats["train_loss"][-1], epoch_stats["train_acc"][-1], epoch_stats["valid_loss"][-1], epoch_stats["valid_acc"][-1], epoch_stats["test_loss"][-1], epoch_stats["test_acc"][-1]))
+        #path = f"checkpoints/{model_name}_{dataset}_{lr}_{epoch}.pth"
+        record_metrics(model, epoch_stats, datasets, loss_fn)
+        #torch.save({"model": model, "epoch_stats": epoch_stats}, path)
+        if plot:
+            animator.add(epoch, (epoch_stats["train_loss"][-1], epoch_stats["train_acc"][-1], epoch_stats["valid_loss"][-1], epoch_stats["valid_acc"][-1], epoch_stats["test_loss"][-1], epoch_stats["test_acc"][-1]))
     return epoch_stats
 
 #%%
