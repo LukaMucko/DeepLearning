@@ -33,7 +33,9 @@ def get_dataloaders(dataset, batch_size=64):
     else:
         raise Exception(f"Unknown dataset: {dataset}")
 
-    train_data, val_data = torch.utils.data.random_split(train_dataset, [55000, 5000])
+    valid_size = 5000
+    train_size = len(train_dataset) - valid_size
+    train_data, val_data = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
 
     train = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True)
     valid = torch.utils.data.DataLoader(val_data, batch_size=len(val_data))
