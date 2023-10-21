@@ -2,6 +2,9 @@
 
 import torch
 import torch.nn
+import torchvision
+import torchvision.transforms as transforms
+
 
 
 # -----------------------------------------------------------------------------
@@ -9,6 +12,33 @@ import torch.nn
 # -----------------------------------------------------------------------------
 
 # TODO: Datasets go here.
+
+def get_dataloaders(dataset, batch_size=64):
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Lambda(lambda x: x.view(-1))  # Flatten the images
+    ])
+
+    if dataset == "MNIST":
+        train_dataset = torchvision.datasets.MNIST("data/mnist", train=True, download=True, transform=transform)
+        test_data = torchvision.datasets.MNIST("data/mnist", train=False, download=True, transform=transform)
+
+    elif dataset == "CIFAR10":
+        train_dataset = torchvision.datasets.CIFAR10("data/cifar10", train=True, download=True, transform=transform)
+        test_data = torchvision.datasets.CIFAR10("data/cifar10", train=False, download=True, transform=transform)
+
+    elif dataset == "FashionMNIST":
+        train_dataset = torchvision.datasets.FashionMNIST("data/fashionmnist", train=True, download=True, transform=transform)
+        test_data = torchvision.datasets.FashionMNIST("data/fashionmnist", train=False, download=True, transform=transform)
+    else:
+        raise Exception(f"Unknown dataset: {dataset}")
+
+    train_data, val_data = torch.utils.data.random_split(train_dataset, [55000, 5000])
+
+    train = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    valid = torch.utils.data.DataLoader(val_data, batch_size=len(val_data))
+    test = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
+    return train, valid, test
 
 # -----------------------------------------------------------------------------
 # Network architectures
