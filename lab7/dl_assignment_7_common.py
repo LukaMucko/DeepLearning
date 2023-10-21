@@ -50,7 +50,7 @@ def get_dataloaders(dataset, batch_size=64):
 
 def create_lenet(image_size=28):
     return torch.nn.Sequential(
-        torch.nn.Linear(28**2, 300),
+        torch.nn.Linear(image_size**2, 300),
         torch.nn.ReLU(),
         torch.nn.Linear(300, 100),
         torch.nn.ReLU(),
