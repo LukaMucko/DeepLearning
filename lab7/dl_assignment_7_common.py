@@ -4,7 +4,7 @@ import torch
 import torch.nn
 import torchvision
 import torchvision.transforms as transforms
-
+import torch.nn.utils.prune as prune
 
 
 # -----------------------------------------------------------------------------
@@ -28,8 +28,10 @@ def get_dataloaders(dataset, batch_size=64):
         test_data = torchvision.datasets.CIFAR10("data/cifar10", train=False, download=True, transform=transform)
 
     elif dataset == "FashionMNIST":
-        train_dataset = torchvision.datasets.FashionMNIST("data/fashionmnist", train=True, download=True, transform=transform)
-        test_data = torchvision.datasets.FashionMNIST("data/fashionmnist", train=False, download=True, transform=transform)
+        train_dataset = torchvision.datasets.FashionMNIST("data/fashionmnist", train=True, download=True,
+                                                          transform=transform)
+        test_data = torchvision.datasets.FashionMNIST("data/fashionmnist", train=False, download=True,
+                                                      transform=transform)
     else:
         raise Exception(f"Unknown dataset: {dataset}")
 
@@ -42,6 +44,7 @@ def get_dataloaders(dataset, batch_size=64):
     test = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
     return train, valid, test
 
+
 # -----------------------------------------------------------------------------
 # Network architectures
 # -----------------------------------------------------------------------------
@@ -50,12 +53,13 @@ def get_dataloaders(dataset, batch_size=64):
 
 def create_lenet(image_size=28):
     return torch.nn.Sequential(
-        torch.nn.Linear(image_size**2, 300),
+        torch.nn.Linear(image_size ** 2, 300),
         torch.nn.ReLU(),
         torch.nn.Linear(300, 100),
         torch.nn.ReLU(),
         torch.nn.Linear(100, 10)
     )
+
 
 def create_conv_2(image_size=32):
     return torch.nn.Sequential(
@@ -64,12 +68,13 @@ def create_conv_2(image_size=32):
         torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
 
         torch.nn.Flatten(),
-        torch.nn.Linear(int((image_size/2)**2 * 64), 256),
+        torch.nn.Linear(int((image_size / 2) ** 2 * 64), 256),
         torch.nn.ReLU(),
         torch.nn.Linear(256, 256),
         torch.nn.ReLU(),
         torch.nn.Linear(256, 10)
     )
+
 
 def create_conv_4(image_size=32):
     return torch.nn.Sequential(
@@ -82,7 +87,7 @@ def create_conv_4(image_size=32):
         torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
 
         torch.nn.Flatten(),
-        torch.nn.Linear(int((image_size/4)**2 * 128), 256),
+        torch.nn.Linear(int((image_size / 4) ** 2 * 128), 256),
         torch.nn.ReLU(),
         torch.nn.Linear(256, 256),
         torch.nn.ReLU(),
@@ -114,6 +119,7 @@ def create_conv_6(image_size=32):
         torch.nn.Linear(256, 10)
     )
 
+
 class ResidualBlock(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, strides=1, padding='same'):
         super().__init__()
@@ -125,6 +131,7 @@ class ResidualBlock(torch.nn.Module):
         Y = self.conv2(Y)
         Y += X
         return torch.nn.functional.relu(Y)
+
 
 def create_resnet_18(image_size=32):
     return torch.nn.Sequential(
@@ -143,8 +150,9 @@ def create_resnet_18(image_size=32):
         ResidualBlock(64, 64),
 
         torch.nn.AvgPool2d(kernel_size=(2, 2), stride=(2, 2)),
-        torch.nn.Linear(int((image_size/8)**2 * 64), 10),
+        torch.nn.Linear(int((image_size / 8) ** 2 * 64), 10),
     )
+
 
 def create_vgg_19(image_size=32):
     return torch.nn.Sequential(
@@ -174,8 +182,9 @@ def create_vgg_19(image_size=32):
         torch.nn.Conv2d(512, 512, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
 
         torch.nn.AvgPool2d(kernel_size=(2, 2), stride=(2, 2)),
-        torch.nn.Linear(int((image_size/32)**2 * 64), 10),
+        torch.nn.Linear(int((image_size / 32) ** 2 * 64), 10),
     )
+
 
 def create_network(arch, **kwargs):
     # TODO: Change this function for the architectures you want to support
@@ -195,7 +204,6 @@ def create_network(arch, **kwargs):
         raise Exception(f"Unknown architecture: {arch}")
 
 
-
 # -----------------------------------------------------------------------------
 # Training and testing loops
 # -----------------------------------------------------------------------------
@@ -207,5 +215,47 @@ def create_network(arch, **kwargs):
 # -----------------------------------------------------------------------------
 
 # TODO: Put functions related to pruning here
+def local_prune(net, fc_amount, conv_amount, out_amount, prune_operation):
+    for layer in list(net.children())[:-1]:
+        if isinstance(layer, torch.nn.Linear):
+            prune_operation(layer, name="weight", amount=fc_amount)
+        elif isinstance(layer, torch.nn.Conv2d):
+            prune_operation(layer, name="weight", amount=conv_amount)
+    prune_operation(list(net.children())[-1], name="weight", amount=out_amount)
 
-#%%
+
+def global_prune(net, amount, prune_type, layer_type_to_prune=torch.nn.Conv2d):
+    parameters = []
+    for layer in net.children():
+        if isinstance(layer, layer_type_to_prune):
+            parameters.append((layer, "weight"))
+        elif isinstance(layer, ResidualBlock):
+            for sub_layer_name, sub_layer in layer.named_children():
+                if isinstance(sub_layer, layer_type_to_prune):
+                    parameters.append((sub_layer, "weight"))
+
+    prune.global_unstructured(parameters, prune_type, amount=amount)
+
+
+def prune_network(net, net_type, amount, prune_type=prune.L1Unstructured, conv_amount=None, out_amount=None):
+    local = net_type in ["lenet", "conv2", "conv4", "conv6"]
+    if local:
+        if conv_amount is None:
+            conv_amount = amount
+        if out_amount is None:
+            out_amount = amount / 2
+        local_prune(net, amount, conv_amount, out_amount, prune_type.apply)
+    else:
+        global_prune(net, amount, prune_type)
+
+
+def prune_network_from_mask(net_in, net_out):
+    for layer_in, layer_out in zip(net_in.children(), net_out.children()):
+        if isinstance(layer_in, (torch.nn.Linear, torch.nn.Conv2d)):
+            prune.custom_from_mask(layer_out, name="weight", mask=layer_in.weight_mask)
+        elif isinstance(layer_in, ResidualBlock):
+            for sublayer_in, sublayer_out in zip(layer_in.children(), layer_out.children()):
+                if isinstance(sublayer_in, (torch.nn.Linear, torch.nn.Conv2d)):
+                    prune.custom_from_mask(sublayer_out, name="weight", mask=sublayer_in.weight_mask)
+
+# %%

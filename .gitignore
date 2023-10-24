@@ -2,3 +2,4 @@
 FashionMNIST
 free-spoken-digit-dataset
 data/
+__pycache__/
