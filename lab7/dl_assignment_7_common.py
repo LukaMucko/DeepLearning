@@ -1,10 +1,13 @@
 # This is a file where you should put your own functions
 
+import pandas as pd
+import os
 import torch
 import torch.nn
 import torchvision
 import torchvision.transforms as transforms
 import torch.nn.utils.prune as prune
+from d2l import torch as d2l
 
 
 # -----------------------------------------------------------------------------
@@ -18,9 +21,9 @@ def get_dataloaders(dataset, model_name="lenet", batch_size=64):
         transform = transforms.Compose([transforms.ToTensor()])
     else:
         transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Lambda(lambda x: x.view(-1))  # Flatten the images
-    ])
+            transforms.ToTensor(),
+            transforms.Lambda(lambda x: x.view(-1))  # Flatten the images
+        ])
 
     if dataset == "MNIST":
         train_dataset = torchvision.datasets.MNIST("data/mnist", train=True, download=True, transform=transform)
@@ -47,6 +50,16 @@ def get_dataloaders(dataset, model_name="lenet", batch_size=64):
     test = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
     return train, valid, test
 
+
+def get_image_size(dataset_name):
+    if dataset_name in ["MNIST", "FashionMNIST"]:
+        return 28
+    elif dataset_name == "CIFAR10":
+        return 32
+    else:
+        raise Exception(f"Unknown dataset: {dataset_name}")
+
+
 # -----------------------------------------------------------------------------
 # Network architectures
 # -----------------------------------------------------------------------------
@@ -55,7 +68,7 @@ def get_dataloaders(dataset, model_name="lenet", batch_size=64):
 
 def create_lenet(image_size=28):
     return torch.nn.Sequential(
-        torch.nn.Linear(int(image_size**2), 300),
+        torch.nn.Linear(int(image_size ** 2), 300),
         torch.nn.ReLU(),
         torch.nn.Linear(300, 100),
         torch.nn.ReLU(),
@@ -210,7 +223,7 @@ def create_network(arch, **kwargs):
 # Training and testing loops
 # -----------------------------------------------------------------------------
 
-def record_metrics(model, epoch_stats, datasets, loss_fn):
+def record_metrics(model, epoch_stats, datasets, loss_fn, device):
     with torch.no_grad():
         for name, dataset in datasets.items():
             eval_metric = d2l.Accumulator(2)
@@ -223,47 +236,93 @@ def record_metrics(model, epoch_stats, datasets, loss_fn):
             epoch_stats[name + "_acc"].append(d2l.evaluate_accuracy_gpu(model, dataset))
             eval_metric.reset()
 
-def train(model_name: str, dataset, optimizer, batch_size=64, lr=0.01, epochs=100, device="cuda", momentum=0, plot=True):
-    train, valid, test = get_dataloaders(dataset, model_name, batch_size)
-    if dataset=="CIFAR10":
-        image_size=32
+
+def resume_training(model, path, epochs):
+    epoch_stats = {"train_loss": [], "valid_loss": [], "test_loss": [], "train_acc": [], "valid_acc": [],
+                   "test_acc": []}
+
+    if not os.path.exists(path) or os.listdir(path) == []:
+        if not os.path.exists(path):
+            os.mkdir(path)
+        return model, epoch_stats, 1
+
+    epoch_stats_df = pd.read_csv(os.path.join(path, "epoch_stats.csv"), index_col="epoch")
+    last_epoch = epoch_stats_df.index[-1]
+
+    if last_epoch == epochs:
+        model = torch.load(os.path.join(path, "final.pth"))
     else:
-        image_size=28
-    model = create_network(model_name, image_size=image_size)
+        model.load_state_dict(torch.load(os.path.join(path, f"{last_epoch}.pth"))["model_state_dict"])
+
+    epoch_stats = epoch_stats_df.to_dict(orient="list")
+    return model, epoch_stats, last_epoch + 1
+
+
+def save_training(model, path, epoch_stats, epoch):
+    checkpoint_path = os.path.join(path, f"{epoch}.pth")
+    torch.save({"model_state_dict": model.state_dict()}, checkpoint_path)
+    epoch_stats = pd.DataFrame(epoch_stats, index=range(1, len(epoch_stats["train_loss"]) + 1))
+    epoch_stats.index.name = "epoch"
+    epoch_stats.to_csv(os.path.join(path, "epoch_stats.csv"))
+
+
+def train(model, datasets, experiment_name_path, optimizer="adam", lr=0.01, epochs=100, device=d2l.try_gpu(),
+          momentum=0, plot=True):
+    path = os.path.join(os.getcwd(), "checkpoints", f"{experiment_name_path}_{lr}_{optimizer}")
+
+    animator = None
     model.to(device)
 
-    #Optimizer is the string "adam" or "sgd"
-    if optimizer=="adam":
-        optimizer=torch.optim.Adam(model.parameters(), lr)
-    elif optimizer=="sgd":
-        optimizer=torch.optim.SGD(model.parameters(), lr, momentum)
+    # Optimizer is the string "adam" or "sgd"
+    if optimizer == "adam":
+        optimizer = torch.optim.Adam(model.parameters(), lr)
+    elif optimizer == "sgd":
+        optimizer = torch.optim.SGD(model.parameters(), lr, momentum)
     else:
         raise Exception("Optimizer should be adam or sgd")
     loss_fn = torch.nn.CrossEntropyLoss()
 
-    datasets = {"valid": valid, "test": test, "train": train}
-    epoch_stats = {"train_loss": [], "valid_loss": [], "test_loss": [], "train_acc": [], "valid_acc": [], "test_acc": []}
+    model, epoch_stats, start_epoch = resume_training(model, path, epochs)
 
-    record_metrics(model, epoch_stats, datasets, loss_fn)
-    path = f"checkpoints/{model_name}_{dataset}_{lr}_0.pth"
-    torch.save({"model": model, "epoch_stats": epoch_stats}, path)
+    if start_epoch > epochs:
+        return model, epoch_stats
 
-    for epoch in range(1, epochs+1):
+    if plot:
+        animator = d2l.Animator(xlabel='epoch', xlim=[start_epoch, epochs], figsize=(10, 5),
+                                legend=['train loss', 'train accuracy', "valid_loss", "valid_acc", 'test loss',
+                                        'test accuracy'])
+
+    for epoch in range(start_epoch, epochs + 1):
         model.train()
 
-        for i, (x, y) in enumerate(train):
+        for i, (x, y) in enumerate(datasets['train']):
             optimizer.zero_grad()
-            x, y= x.to(device), y.to(device, torch.long)
+            x, y = x.to(device), y.to(device, torch.long)
             y_hat = model(x)
             loss = loss_fn(y_hat, y)
             loss.backward()
             optimizer.step()
 
-        if epoch % 10 ==0:
-            path = f"checkpoints/{model_name}_{dataset}_{lr}_{epoch}.pth"
-            record_metrics(model, epoch_stats, datasets, loss_fn)
-            torch.save({"model": model, "epoch_stats": epoch_stats}, path)
-    return epoch_stats
+        record_metrics(model, epoch_stats, datasets, loss_fn, device)
+        if epoch % 2 == 0:
+            save_training(model, path, epoch_stats, epoch)
+
+        if plot:
+            animator.add(epoch, (
+                epoch_stats["train_loss"][-1], epoch_stats["train_acc"][-1], epoch_stats["valid_loss"][-1],
+                epoch_stats["valid_acc"][-1], epoch_stats["test_loss"][-1], epoch_stats["test_acc"][-1]))
+        else:
+            print(f"Epoch {epoch}: train loss {epoch_stats['train_loss'][-1]:.3f}, "
+                  f"train acc {epoch_stats['train_acc'][-1]:.3f}, "
+                  f"valid loss {epoch_stats['valid_loss'][-1]:.3f}, "
+                  f"valid acc {epoch_stats['valid_acc'][-1]:.3f}, "
+                  f"test loss {epoch_stats['test_loss'][-1]:.3f}, "
+                  f"test acc {epoch_stats['test_acc'][-1]:.3f}")
+
+    torch.save(model, os.path.join(path, "final.pth"))
+    return model, epoch_stats
+
+
 # -----------------------------------------------------------------------------
 # Pruning
 # -----------------------------------------------------------------------------
