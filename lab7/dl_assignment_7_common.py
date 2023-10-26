@@ -1,6 +1,7 @@
 # This is a file where you should put your own functions
 
 import pandas as pd
+import numpy as np
 import copy
 import os
 import torch
@@ -142,10 +143,13 @@ class ResidualBlock(torch.nn.Module):
         self.conv1 = torch.nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=strides, padding=1)
         self.conv2 = torch.nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding)
 
+        self.skip_connection = torch.nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=strides,
+                                               padding=0, bias=False)
+
     def forward(self, X):
         Y = torch.nn.functional.relu(self.conv1(X))
         Y = self.conv2(Y)
-        Y += X
+        Y += self.skip_connection(X)
         return torch.nn.functional.relu(Y)
 
 
@@ -333,12 +337,15 @@ def train(net, datasets, experiment_name_path, optimizer="adam", lr=0.01, epochs
                 epoch_stats["train_loss"][-1], epoch_stats["train_acc"][-1], epoch_stats["valid_loss"][-1],
                 epoch_stats["valid_acc"][-1], epoch_stats["test_loss"][-1], epoch_stats["test_acc"][-1]))
         else:
+            print(f"Epoch: {epoch_stats}", ": ", end="")
             print_training_results(epoch_stats)
 
         if early_stop_metric is not None and epoch > early_stop_patience:
             if epoch_stats[early_stop_metric][-early_stop_patience-1] > epoch_stats[early_stop_metric][-1]:
                 model.load_state_dict(torch.load(os.path.join(path, f"{epoch-early_stop_patience}.pth")))
-                epoch_stats['early_stop_epoch'] = epoch-early_stop_patience
+                best_epoch_find = np.argmax if early_stop_metric in ["valid_acc", "test_acc"] else np.argmin
+                epoch_stats['early_stop_epoch'] = best_epoch_find(epoch_stats[early_stop_metric]
+                                                                  [save_patience-1::save_patience]) * save_patience + 1
                 break
 
     print_training_results(epoch_stats)
@@ -354,7 +361,8 @@ def print_training_results(epoch_stats):
 
 
 def print_plot_results(epoch_stats, title):
-    pd.DataFrame(epoch_stats).plot(xlabel="epoch", ylabel="metric value", title=title, grid=True)
+    pd.DataFrame(epoch_stats, index=range(1, len(epoch_stats['train_loss'])+1)
+                 ).plot(xlabel="epoch", ylabel="metric value", title=title, grid=True)
     print(title, ": ", end="")
     print_training_results(epoch_stats)
 
