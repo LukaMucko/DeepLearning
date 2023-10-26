@@ -1,6 +1,7 @@
 # This is a file where you should put your own functions
 
 import pandas as pd
+import copy
 import os
 import torch
 import torch.nn
@@ -223,18 +224,11 @@ def create_network(arch, **kwargs):
 # Training and testing loops
 # -----------------------------------------------------------------------------
 
-def record_metrics(model, epoch_stats, datasets, loss_fn, device):
-    with torch.no_grad():
-        for name, dataset in datasets.items():
-            eval_metric = d2l.Accumulator(2)
-            for x, y in dataset:
-                x, y = x.to(device), y.to(device, torch.long)
-                y_hat = model(x)
-                loss = loss_fn(y_hat, y).item()
-                eval_metric.add(loss * x.shape[0], x.shape[0])
-            epoch_stats[name + "_loss"].append(eval_metric[0] / eval_metric[1])
-            epoch_stats[name + "_acc"].append(d2l.evaluate_accuracy_gpu(model, dataset))
-            eval_metric.reset()
+def load_network(experiment_name_path, lr, optimizer):
+    path = os.path.join(os.getcwd(), "checkpoints", f"{experiment_name_path}_{lr}_{optimizer}")
+    model = torch.load(os.path.join(path, "final.pth"))
+    epoch_stats = pd.read_csv(os.path.join(path, "epoch_stats.csv"), index_col="epoch").to_dict(orient="list")
+    return model, epoch_stats
 
 
 def resume_training(model, path, epochs):
@@ -266,12 +260,38 @@ def save_training(model, path, epoch_stats, epoch):
     epoch_stats.to_csv(os.path.join(path, "epoch_stats.csv"))
 
 
-def train(model, datasets, experiment_name_path, optimizer="adam", lr=0.01, epochs=100, device=d2l.try_gpu(),
-          momentum=0, plot=True):
-    path = os.path.join(os.getcwd(), "checkpoints", f"{experiment_name_path}_{lr}_{optimizer}")
+def record_metrics(model, epoch_stats, datasets, loss_fn, device):
+    with torch.no_grad():
+        for name, dataset in datasets.items():
+            eval_metric = d2l.Accumulator(2)
+            for x, y in dataset:
+                x, y = x.to(device), y.to(device, torch.long)
+                y_hat = model(x)
+                loss = loss_fn(y_hat, y).item()
+                eval_metric.add(loss * x.shape[0], x.shape[0])
+            epoch_stats[name + "_loss"].append(eval_metric[0] / eval_metric[1])
+            epoch_stats[name + "_acc"].append(d2l.evaluate_accuracy_gpu(model, dataset))
+            eval_metric.reset()
 
+
+def train(net, datasets, experiment_name_path, optimizer="adam", lr=0.01, epochs=100, device=d2l.try_gpu(),
+          momentum=0, plot=True, save_patience=2, early_stop_metric=None, early_stop_patience=None):
+    """
+    Note: early_stop_patience is the number of save checkpoints to wait before stopping,
+    so with save_patience=1, early_stop_patience is the number of epochs to wait
+    """
+    path = os.path.join(os.getcwd(), "checkpoints", f"{experiment_name_path}_{lr}_{optimizer}")
+    model = copy.deepcopy(net)
     animator = None
     model.to(device)
+
+    if early_stop_patience is None:
+        early_stop_patience = epochs
+    else:
+        early_stop_patience = early_stop_patience * save_patience
+
+    if early_stop_metric not in ["valid_acc", "valid_loss", "train_loss", "test_loss", None] or early_stop_patience < 1:
+        raise Exception("Invalid early stop parameters")
 
     # Optimizer is the string "adam" or "sgd"
     if optimizer == "adam":
@@ -304,7 +324,8 @@ def train(model, datasets, experiment_name_path, optimizer="adam", lr=0.01, epoc
             optimizer.step()
 
         record_metrics(model, epoch_stats, datasets, loss_fn, device)
-        if epoch % 2 == 0:
+
+        if epoch % save_patience == 0:
             save_training(model, path, epoch_stats, epoch)
 
         if plot:
@@ -312,15 +333,30 @@ def train(model, datasets, experiment_name_path, optimizer="adam", lr=0.01, epoc
                 epoch_stats["train_loss"][-1], epoch_stats["train_acc"][-1], epoch_stats["valid_loss"][-1],
                 epoch_stats["valid_acc"][-1], epoch_stats["test_loss"][-1], epoch_stats["test_acc"][-1]))
         else:
-            print(f"Epoch {epoch}: train loss {epoch_stats['train_loss'][-1]:.3f}, "
-                  f"train acc {epoch_stats['train_acc'][-1]:.3f}, "
-                  f"valid loss {epoch_stats['valid_loss'][-1]:.3f}, "
-                  f"valid acc {epoch_stats['valid_acc'][-1]:.3f}, "
-                  f"test loss {epoch_stats['test_loss'][-1]:.3f}, "
-                  f"test acc {epoch_stats['test_acc'][-1]:.3f}")
+            print_training_results(epoch_stats)
 
+        if early_stop_metric is not None and epoch > early_stop_patience:
+            if epoch_stats[early_stop_metric][-early_stop_patience-1] > epoch_stats[early_stop_metric][-1]:
+                model.load_state_dict(torch.load(os.path.join(path, f"{epoch-early_stop_patience}.pth")))
+                epoch_stats['early_stop_epoch'] = epoch-early_stop_patience
+                break
+
+    print_training_results(epoch_stats)
     torch.save(model, os.path.join(path, "final.pth"))
     return model, epoch_stats
+
+
+def print_training_results(epoch_stats):
+    epoch = -1 if "early_stop_epoch" not in epoch_stats else epoch_stats["early_stop_epoch"]-1
+    print(f"train loss {epoch_stats['train_loss'][epoch]:.3f}, train acc {epoch_stats['train_acc'][epoch]:.3f}, "
+          f"valid loss {epoch_stats['valid_loss'][epoch]:.3f}, valid acc {epoch_stats['valid_acc'][epoch]:.3f}, "
+          f"test loss {epoch_stats['test_loss'][epoch]:.3f}, test acc {epoch_stats['test_acc'][epoch]:.3f}")
+
+
+def print_plot_results(epoch_stats, title):
+    pd.DataFrame(epoch_stats).plot(xlabel="epoch", ylabel="metric value", title=title, grid=True)
+    print(title, ": ", end="")
+    print_training_results(epoch_stats)
 
 
 # -----------------------------------------------------------------------------
