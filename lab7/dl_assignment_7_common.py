@@ -1,5 +1,5 @@
 # This is a file where you should put your own functions
-
+import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import copy
@@ -62,6 +62,7 @@ def get_image_size(dataset_name):
         raise Exception(f"Unknown dataset: {dataset_name}")
 
 
+
 # -----------------------------------------------------------------------------
 # Network architectures
 # -----------------------------------------------------------------------------
@@ -80,7 +81,7 @@ def create_lenet(image_size=28):
 
 def create_conv_2(image_size=32):
     return torch.nn.Sequential(
-        torch.nn.Conv2d(1, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
+        torch.nn.Conv2d(3, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
         torch.nn.Conv2d(64, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
         torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
 
@@ -95,7 +96,7 @@ def create_conv_2(image_size=32):
 
 def create_conv_4(image_size=32):
     return torch.nn.Sequential(
-        torch.nn.Conv2d(1, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
+        torch.nn.Conv2d(3, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
         torch.nn.Conv2d(64, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
         torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
 
@@ -114,7 +115,7 @@ def create_conv_4(image_size=32):
 
 def create_conv_6(image_size=32):
     return torch.nn.Sequential(
-        torch.nn.Conv2d(1, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
+        torch.nn.Conv2d(3, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
         torch.nn.Conv2d(64, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
         torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
 
@@ -144,7 +145,7 @@ class ResidualBlock(torch.nn.Module):
         self.conv2 = torch.nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding)
 
         self.skip_connection = torch.nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=strides,
-                                               padding=0, bias=False)
+                                               padding=0)
 
     def forward(self, X):
         Y = torch.nn.functional.relu(self.conv1(X))
@@ -155,7 +156,8 @@ class ResidualBlock(torch.nn.Module):
 
 def create_resnet_18(image_size=32):
     return torch.nn.Sequential(
-        torch.nn.Conv2d(3, 16, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
+        torch.nn.Conv2d(3, 16, kernel_size=(3, 3), padding=1, stride=2), torch.nn.ReLU(),
+        torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
 
         ResidualBlock(16, 16),
         ResidualBlock(16, 16),
@@ -170,7 +172,8 @@ def create_resnet_18(image_size=32):
         ResidualBlock(64, 64),
 
         torch.nn.AvgPool2d(kernel_size=(2, 2), stride=(2, 2)),
-        torch.nn.Linear(int((image_size / 8) ** 2 * 64), 10),
+        torch.nn.Flatten(),
+        torch.nn.Linear(int((image_size / 32) ** 2 * 64), 10),
     )
 
 
@@ -202,7 +205,8 @@ def create_vgg_19(image_size=32):
         torch.nn.Conv2d(512, 512, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
 
         torch.nn.AvgPool2d(kernel_size=(2, 2), stride=(2, 2)),
-        torch.nn.Linear(int((image_size / 32) ** 2 * 64), 10),
+        torch.nn.Flatten(),
+        torch.nn.Linear(int((image_size / 32) ** 2 * 512), 10),
     )
 
 
@@ -224,12 +228,16 @@ def create_network(arch, **kwargs):
         raise Exception(f"Unknown architecture: {arch}")
 
 
+def get_num_epochs(net_name):  # values taken from figure2, batch size and the data dimensions (paper_iter / (len/64))
+    return {"lenet": 65, "conv2": 25, "conv4": 30, "conv6": 38,
+            "resnet18": 38, "vgg19": 140}[net_name]
+
 # -----------------------------------------------------------------------------
 # Training and testing loops
 # -----------------------------------------------------------------------------
 
-def load_network(experiment_name_path, lr, optimizer):
-    path = os.path.join(os.getcwd(), "checkpoints", f"{experiment_name_path}_{lr}_{optimizer}")
+def load_network(experiment_name, lr, optimizer, save_path="checkpoints"):
+    path = os.path.join(os.getcwd(), save_path, f"{experiment_name}_{lr}_{optimizer}")
     model = torch.load(os.path.join(path, "final.pth"))
     epoch_stats = pd.read_csv(os.path.join(path, "epoch_stats.csv"), index_col="epoch").to_dict(orient="list")
     return model, epoch_stats
@@ -278,24 +286,15 @@ def record_metrics(model, epoch_stats, datasets, loss_fn, device):
             eval_metric.reset()
 
 
-def train(net, datasets, experiment_name_path, optimizer="adam", lr=0.01, epochs=100, device=d2l.try_gpu(),
-          momentum=0, plot=True, save_patience=2, early_stop_metric=None, early_stop_patience=None):
-    """
-    Note: early_stop_patience is the number of save checkpoints to wait before stopping,
-    so with save_patience=1, early_stop_patience is the number of epochs to wait
-    """
-    path = os.path.join(os.getcwd(), "checkpoints", f"{experiment_name_path}_{lr}_{optimizer}")
+def train(net, datasets, experiment_name, optimizer="adam", lr=0.01, epochs=100, save_path="checkpoints",
+          device=d2l.try_gpu(), momentum=0, plot=True, save_patience=2, early_stop_metric=None):
+    path = os.path.join(os.getcwd(), save_path, f"{experiment_name}_{lr}_{optimizer}")
     model = copy.deepcopy(net)
     animator = None
     model.to(device)
 
-    if early_stop_patience is None:
-        early_stop_patience = epochs
-    else:
-        early_stop_patience = early_stop_patience * save_patience
-
-    if early_stop_metric not in ["valid_acc", "valid_loss", "train_loss", "test_loss", None] or early_stop_patience < 1:
-        raise Exception("Invalid early stop parameters")
+    if early_stop_metric not in ["valid_acc", "valid_loss", "train_loss", "test_loss", None]:
+        raise Exception("Invalid early stop metric")
 
     # Optimizer is the string "adam" or "sgd"
     if optimizer == "adam":
@@ -329,7 +328,7 @@ def train(net, datasets, experiment_name_path, optimizer="adam", lr=0.01, epochs
 
         record_metrics(model, epoch_stats, datasets, loss_fn, device)
 
-        if epoch % save_patience == 0:
+        if epoch % save_patience == 0 or epoch == epochs:
             save_training(model, path, epoch_stats, epoch)
 
         if plot:
@@ -340,13 +339,13 @@ def train(net, datasets, experiment_name_path, optimizer="adam", lr=0.01, epochs
             print(f"Epoch: {epoch_stats}", ": ", end="")
             print_training_results(epoch_stats)
 
-        if early_stop_metric is not None and epoch > early_stop_patience:
-            if epoch_stats[early_stop_metric][-early_stop_patience-1] > epoch_stats[early_stop_metric][-1]:
-                model.load_state_dict(torch.load(os.path.join(path, f"{epoch-early_stop_patience}.pth")))
-                best_epoch_find = np.argmax if early_stop_metric in ["valid_acc", "test_acc"] else np.argmin
-                epoch_stats['early_stop_epoch'] = best_epoch_find(epoch_stats[early_stop_metric]
-                                                                  [save_patience-1::save_patience]) * save_patience + 1
-                break
+    if early_stop_metric is not None:
+        # model.load_state_dict(torch.load(os.path.join(path, f"{epoch-early_stop_patience}.pth")))
+        best_epoch_find = np.argmax if early_stop_metric in ["valid_acc", "test_acc"] else np.argmin
+        epoch_stats['early_stop_epoch'] = (best_epoch_find(epoch_stats[early_stop_metric]
+                                                          [save_patience-1::save_patience]) + 1) * save_patience
+        model.load_state_dict(torch.load(os.path.join(path, f"{epoch_stats['early_stop_epoch']}.pth"))
+                              ["model_state_dict"])
 
     print_training_results(epoch_stats)
     torch.save(model, os.path.join(path, "final.pth"))
@@ -363,6 +362,10 @@ def print_training_results(epoch_stats):
 def print_plot_results(epoch_stats, title):
     pd.DataFrame(epoch_stats, index=range(1, len(epoch_stats['train_loss'])+1)
                  ).plot(xlabel="epoch", ylabel="metric value", title=title, grid=True)
+
+    if "early_stop_epoch" in epoch_stats:
+        plt.axvline(epoch_stats["early_stop_epoch"], color="red", linestyle="--")
+
     print(title, ": ", end="")
     print_training_results(epoch_stats)
 
@@ -415,4 +418,7 @@ def prune_network_from_mask(net_in, net_out):
                 if isinstance(sublayer_in, (torch.nn.Linear, torch.nn.Conv2d)):
                     prune.custom_from_mask(sublayer_out, name="weight", mask=sublayer_in.weight_mask)
 
-# %%
+
+def get_pruned_params(net, params_before):
+    params_after = params_before - sum(torch.sum(b == 0) for b in net.buffers()).item()
+    return round(abs(1 - (params_after / params_before)), 2)
