@@ -314,7 +314,7 @@ def train(net, datasets, experiment_name, optimizer="adam", lr=0.01, epochs=100,
         animator = d2l.Animator(xlabel='epoch', xlim=[start_epoch, epochs], figsize=(10, 5),
                                 legend=['train loss', 'train accuracy', "valid_loss", "valid_acc", 'test loss',
                                         'test accuracy'])
-
+    final_model = model
     for epoch in range(start_epoch, epochs + 1):
         model.train()
 
@@ -328,7 +328,7 @@ def train(net, datasets, experiment_name, optimizer="adam", lr=0.01, epochs=100,
 
         record_metrics(model, epoch_stats, datasets, loss_fn, device)
 
-        if epoch % save_patience == 0 or epoch == epochs:
+        if epoch % save_patience == 0:
             save_training(model, path, epoch_stats, epoch)
 
         if plot:
@@ -344,11 +344,13 @@ def train(net, datasets, experiment_name, optimizer="adam", lr=0.01, epochs=100,
         best_epoch_find = np.argmax if early_stop_metric in ["valid_acc", "test_acc"] else np.argmin
         epoch_stats['early_stop_epoch'] = (best_epoch_find(epoch_stats[early_stop_metric]
                                                           [save_patience-1::save_patience]) + 1) * save_patience
-        model.load_state_dict(torch.load(os.path.join(path, f"{epoch_stats['early_stop_epoch']}.pth"))
+        final_model.load_state_dict(torch.load(os.path.join(path, f"{epoch_stats['early_stop_epoch']}.pth"))
                               ["model_state_dict"])
 
+    save_training(model, path, epoch_stats, epochs) # save last epoch and eventual change to epoch_stats
+
     print_training_results(epoch_stats)
-    torch.save(model, os.path.join(path, "final.pth"))
+    torch.save(final_model, os.path.join(path, "final.pth"))
     return model, epoch_stats
 
 
@@ -376,12 +378,15 @@ def print_plot_results(epoch_stats, title):
 
 # TODO: Put functions related to pruning here
 def local_prune(net, fc_amount, conv_amount, out_amount, prune_operation):
+    """
+    Note: conv_amount and out_amount are modifier to fc_amount
+    """
     for layer in list(net.children())[:-1]:
         if isinstance(layer, torch.nn.Linear):
             prune_operation(layer, name="weight", amount=fc_amount)
         elif isinstance(layer, torch.nn.Conv2d):
-            prune_operation(layer, name="weight", amount=conv_amount)
-    prune_operation(list(net.children())[-1], name="weight", amount=out_amount)
+            prune_operation(layer, name="weight", amount=fc_amount * conv_amount)
+    prune_operation(list(net.children())[-1], name="weight", amount=fc_amount * out_amount)
 
 
 def global_prune(net, amount, prune_type, layer_type_to_prune=torch.nn.Conv2d):
@@ -398,12 +403,15 @@ def global_prune(net, amount, prune_type, layer_type_to_prune=torch.nn.Conv2d):
 
 
 def prune_network(net, net_type, amount, prune_type=prune.L1Unstructured, conv_amount=None, out_amount=None):
+    """
+    Note: conv_amount and out_amount are modifier to amount
+    """
     local = net_type in ["lenet", "conv2", "conv4", "conv6"]
     if local:
         if conv_amount is None:
-            conv_amount = amount
+            conv_amount = 1
         if out_amount is None:
-            out_amount = amount / 2
+            out_amount = 0.5
         local_prune(net, amount, conv_amount, out_amount, prune_type.apply)
     else:
         global_prune(net, amount, prune_type)
