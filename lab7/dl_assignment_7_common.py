@@ -18,7 +18,7 @@ from d2l import torch as d2l
 
 # TODO: Datasets go here.
 
-def get_dataloaders(dataset, model_name="lenet", batch_size=64):
+def get_dataloaders(dataset, model_name="lenet", batch_size=60):
     if not model_name.startswith("lenet"):
         transform = transforms.Compose([transforms.ToTensor()])
     else:
@@ -47,7 +47,7 @@ def get_dataloaders(dataset, model_name="lenet", batch_size=64):
     train_size = len(train_dataset) - valid_size
     train_data, val_data = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
 
-    train = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    train = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=False)
     valid = torch.utils.data.DataLoader(val_data, batch_size=len(val_data))
     test = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
     return train, valid, test
@@ -60,7 +60,6 @@ def get_image_size(dataset_name):
         return 32
     else:
         raise Exception(f"Unknown dataset: {dataset_name}")
-
 
 
 # -----------------------------------------------------------------------------
@@ -79,78 +78,22 @@ def create_lenet(image_size=28):
     )
 
 
-def create_conv_2(image_size=32):
-    return torch.nn.Sequential(
-        torch.nn.Conv2d(3, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-        torch.nn.Conv2d(64, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-        torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
-
-        torch.nn.Flatten(),
-        torch.nn.Linear(int((image_size / 2) ** 2 * 64), 256),
-        torch.nn.ReLU(),
-        torch.nn.Linear(256, 256),
-        torch.nn.ReLU(),
-        torch.nn.Linear(256, 10)
-    )
-
-
-def create_conv_4(image_size=32):
-    return torch.nn.Sequential(
-        torch.nn.Conv2d(3, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-        torch.nn.Conv2d(64, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-        torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
-
-        torch.nn.Conv2d(64, 128, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-        torch.nn.Conv2d(128, 128, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-        torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
-
-        torch.nn.Flatten(),
-        torch.nn.Linear(int((image_size / 4) ** 2 * 128), 256),
-        torch.nn.ReLU(),
-        torch.nn.Linear(256, 256),
-        torch.nn.ReLU(),
-        torch.nn.Linear(256, 10)
-    )
-
-
-def create_conv_6(image_size=32):
-    return torch.nn.Sequential(
-        torch.nn.Conv2d(3, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-        torch.nn.Conv2d(64, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-        torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
-
-        torch.nn.Conv2d(64, 128, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-        torch.nn.Conv2d(128, 128, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-        torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
-
-        torch.nn.Conv2d(128, 256, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-        torch.nn.Conv2d(256, 256, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-        torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
-
-        torch.nn.Flatten(),
-        torch.nn.LazyLinear(256),
-        torch.nn.ReLU(),
-        # torch.nn.Linear(int((image_size/8)**2 * 256), 256),
-        # torch.nn.ReLU(),
-        torch.nn.Linear(256, 256),
-        torch.nn.ReLU(),
-        torch.nn.Linear(256, 10)
-    )
-
-
 class ResidualBlock(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, strides=1, padding='same'):
         super().__init__()
         self.conv1 = torch.nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=strides, padding=1)
+        self.batch1 = torch.nn.BatchNorm2d(out_channels)
         self.conv2 = torch.nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding)
+        self.batch2 = torch.nn.BatchNorm2d(out_channels)
 
         self.skip_connection = torch.nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=strides,
                                                padding=0)
+        self.batch_res = torch.nn.BatchNorm2d(out_channels)
 
     def forward(self, X):
-        Y = torch.nn.functional.relu(self.conv1(X))
-        Y = self.conv2(Y)
-        Y += self.skip_connection(X)
+        Y = torch.nn.functional.relu(self.batch1(self.conv1(X)))
+        Y = self.batch2(self.conv2(Y))
+        Y += self.batch_res(self.skip_connection(X))
         return torch.nn.functional.relu(Y)
 
 
@@ -214,12 +157,6 @@ def create_network(arch, **kwargs):
     # TODO: Change this function for the architectures you want to support
     if arch == 'lenet':
         return create_lenet(**kwargs)
-    elif arch == 'conv2':
-        return create_conv_2(**kwargs)
-    elif arch == 'conv4':
-        return create_conv_4(**kwargs)
-    elif arch == 'conv6':
-        return create_conv_6(**kwargs)
     elif arch == 'resnet18':
         return create_resnet_18(**kwargs)
     elif arch == 'vgg19':
@@ -228,17 +165,21 @@ def create_network(arch, **kwargs):
         raise Exception(f"Unknown architecture: {arch}")
 
 
-def get_num_epochs(net_name):  # values taken from figure2, batch size and the data dimensions (paper_iter / (len/64))
-    return {"lenet": 65, "conv2": 25, "conv4": 30, "conv6": 38,
-            "resnet18": 38, "vgg19": 140}[net_name]
+def get_num_epochs(net_name):  # values taken from figure2, batch size and the data dimensions (paper_iter / (len/60))
+    return {"lenet": 55, "resnet18": 70, "vgg19": 130}[net_name]
+
+
+def get_lr_optimizer(net_name):
+    return {"lenet": (1.2e-3, "adam", 0), "resnet18": (1e-3, "sgd", 0.9), "vgg19": (1e-3, "adam", 0.9)}[net_name]
+
 
 # -----------------------------------------------------------------------------
 # Training and testing loops
 # -----------------------------------------------------------------------------
 
-def load_network(experiment_name, lr, optimizer, save_path="checkpoints"):
+def load_network(experiment_name, lr, optimizer, save_path="checkpoints", device=d2l.try_gpu()):
     path = os.path.join(os.getcwd(), save_path, f"{experiment_name}_{lr}_{optimizer}")
-    model = torch.load(os.path.join(path, "final.pth"))
+    model = torch.load(os.path.join(path, "final.pth"), map_location=device)
     epoch_stats = pd.read_csv(os.path.join(path, "epoch_stats.csv"), index_col="epoch").to_dict(orient="list")
     return model, epoch_stats
 
@@ -288,8 +229,8 @@ def record_metrics(model, epoch_stats, datasets, loss_fn, device):
 
 def train(net, datasets, experiment_name, optimizer="adam", lr=0.01, epochs=100, save_path="checkpoints",
           device=d2l.try_gpu(), momentum=0, plot=True, save_patience=2, early_stop_metric=None):
-    path = os.path.join(os.getcwd(), save_path, f"{experiment_name}_{lr}_{optimizer}")
-    model = copy.deepcopy(net)
+    path = os.path.join(os.getcwd(), save_path, f"{experiment_name}_{lr}_{optimizer}_{momentum}")
+    model = copy.deepcopy(net)  # todo: fix this
     animator = None
     model.to(device)
 
@@ -343,11 +284,11 @@ def train(net, datasets, experiment_name, optimizer="adam", lr=0.01, epochs=100,
         # model.load_state_dict(torch.load(os.path.join(path, f"{epoch-early_stop_patience}.pth")))
         best_epoch_find = np.argmax if early_stop_metric in ["valid_acc", "test_acc"] else np.argmin
         epoch_stats['early_stop_epoch'] = (best_epoch_find(epoch_stats[early_stop_metric]
-                                                          [save_patience-1::save_patience]) + 1) * save_patience
+                                                           [save_patience - 1::save_patience]) + 1) * save_patience
         final_model.load_state_dict(torch.load(os.path.join(path, f"{epoch_stats['early_stop_epoch']}.pth"))
-                              ["model_state_dict"])
+                                    ["model_state_dict"])
 
-    save_training(model, path, epoch_stats, epochs) # save last epoch and eventual change to epoch_stats
+    save_training(model, path, epoch_stats, epochs)  # save last epoch and eventual change to epoch_stats
 
     print_training_results(epoch_stats)
     torch.save(final_model, os.path.join(path, "final.pth"))
@@ -355,18 +296,20 @@ def train(net, datasets, experiment_name, optimizer="adam", lr=0.01, epochs=100,
 
 
 def print_training_results(epoch_stats):
-    epoch = -1 if "early_stop_epoch" not in epoch_stats else epoch_stats["early_stop_epoch"]-1
+    epoch = -1 if "early_stop_epoch" not in epoch_stats else epoch_stats["early_stop_epoch"] - 1
     print(f"train loss {epoch_stats['train_loss'][epoch]:.3f}, train acc {epoch_stats['train_acc'][epoch]:.3f}, "
           f"valid loss {epoch_stats['valid_loss'][epoch]:.3f}, valid acc {epoch_stats['valid_acc'][epoch]:.3f}, "
           f"test loss {epoch_stats['test_loss'][epoch]:.3f}, test acc {epoch_stats['test_acc'][epoch]:.3f}")
 
 
 def print_plot_results(epoch_stats, title):
-    pd.DataFrame(epoch_stats, index=range(1, len(epoch_stats['train_loss'])+1)
+    epoch_stats_to_plot = {
+        key: value for key, value in epoch_stats.items() if key != 'early_stop_epoch'}
+    pd.DataFrame(epoch_stats, index=range(1, len(epoch_stats['train_loss']) + 1)
                  ).plot(xlabel="epoch", ylabel="metric value", title=title, grid=True)
 
     if "early_stop_epoch" in epoch_stats:
-        plt.axvline(epoch_stats["early_stop_epoch"], color="red", linestyle="--")
+        plt.axvline(epoch_stats["early_stop_epoch"][-1], color="red", linestyle="--")
 
     print(title, ": ", end="")
     print_training_results(epoch_stats)
@@ -430,3 +373,126 @@ def prune_network_from_mask(net_in, net_out):
 def get_pruned_params(net, params_before):
     params_after = params_before - sum(torch.sum(b == 0) for b in net.buffers()).item()
     return round(abs(1 - (params_after / params_before)), 2)
+
+
+def random_pruning_training(net, net_type, datasets, experiment_folder_name, save_path="checkpoints",
+                            pruning_targets=None, conv_amount=None, out_amount=None,
+                            prune_type=prune.RandomUnstructured, **training_kwargs):
+    if pruning_targets is None:
+        pruning_targets = [0.2]
+    elif type(pruning_targets) is not list:
+        pruning_targets = [pruning_targets]
+    path = os.path.join(os.getcwd(), save_path, f"{experiment_folder_name}")
+
+    if not os.path.exists(path):
+        os.mkdir(path)
+
+    if training_kwargs.get("epochs") is None:
+        training_kwargs["epochs"] = get_num_epochs(net_type)
+
+    results = {}
+    for pruning_amount in pruning_targets:
+        net_name = str(int((1 - pruning_amount) * 100)).zfill(
+            3)  # makes the name of the network the percentage of weights remaining
+        net_pruned = copy.deepcopy(net)
+        prune_network(net_pruned, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
+                      out_amount=out_amount)
+        trained_net_pruned, stats = train(net_pruned, datasets, net_name, save_path=path, **training_kwargs)
+
+        torch.save(trained_net_pruned, os.path.join(path, f"{net_name}.pth"))
+        results[net_name] = trained_net_pruned
+
+    return results
+
+
+def one_shot_pruning_training(net, net_type, datasets, experiment_folder_name, save_path="checkpoints", retraining=True,
+                              pruning_targets=None, conv_amount=None, out_amount=None, prune_type=prune.L1Unstructured,
+                              **training_kwargs):
+    if pruning_targets is None:
+        pruning_targets = [0.2]
+    elif type(pruning_targets) is not list:
+        pruning_targets = [pruning_targets]
+    path = os.path.join(os.getcwd(), save_path, f"{experiment_folder_name}")
+
+    if not os.path.exists(path):
+        os.mkdir(path)
+
+    if training_kwargs.get("epochs") is None:
+        training_kwargs["epochs"] = get_num_epochs(net_type)
+
+    trained_net, stats = train(net, datasets, "100", save_path=path, **training_kwargs)
+
+    results = {}
+    for pruning_amount in pruning_targets:
+        net_name = str(int((1 - pruning_amount) * 100)).zfill(
+            3)  # makes the name of the network the percentage of weights remaining
+        net_pruned = copy.deepcopy(trained_net)
+        prune_network(net_pruned, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
+                      out_amount=out_amount)
+
+        net_pruned_reinit = copy.deepcopy(net)
+        prune_network_from_mask(net_pruned, net_pruned_reinit)
+        torch.save(net_pruned_reinit, os.path.join(path, f"{net_name}.pth"))
+        results[net_name] = net_pruned
+
+        if retraining:
+            trained_net_pruned, stats = train(net_pruned, datasets, f"trained_{net_name}", save_path=path,
+                                              **training_kwargs)
+            torch.save(trained_net_pruned, os.path.join(path, f"trained_{net_name}.pth"))
+            results["trained_" + net_name] = trained_net_pruned
+
+    return results
+
+
+def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, save_path="checkpoints", reinit=False,
+                               pruning_amount=0.2, pruning_target=0.01, conv_amount=None, out_amount=None,
+                               prune_type=prune.L1Unstructured, **training_kwargs):
+    path = os.path.join(os.getcwd(), save_path, f"{experiment_folder_name}")
+    if not os.path.exists(path) or os.listdir(path) == []:
+        if not os.path.exists(path):
+            os.mkdir(path)
+
+    if training_kwargs.get("epochs") is None:
+        training_kwargs["epochs"] = get_num_epochs(net_type)
+
+    total_params = sum(p.numel() for p in net.parameters())
+    trained_net, stats = train(net, datasets, "100", save_path=path, **training_kwargs)
+    prune_network(trained_net, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
+                  out_amount=out_amount)
+
+    if reinit:
+        net_tmp = copy.deepcopy(net)
+        prune_network_from_mask(trained_net, net_tmp)
+        trained_net = net_tmp
+
+    pruned_params = get_pruned_params(trained_net, total_params)
+
+    results = {}
+    while (1 - pruned_params) > pruning_target:
+        net_name = str(int((1 - pruned_params) * 100)).zfill(
+            3)  # makes the name of the network the percentage of weights remaining
+        results[net_name] = trained_net
+        torch.save(trained_net, os.path.join(path, f"{net_name}.pth"))
+
+        trained_net, stats = train(trained_net, datasets, f"trained_{net_name}", save_path=path, **training_kwargs)
+        results["trained_" + net_name] = trained_net
+        prune_network(net, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
+                      out_amount=out_amount)
+
+        if reinit:
+            net_tmp = copy.deepcopy(net)
+            prune_network_from_mask(trained_net, net_tmp)
+            trained_net = net_tmp
+        pruned_params = get_pruned_params(trained_net, total_params)
+
+    if not reinit:
+        net_tmp = copy.deepcopy(net)
+        prune_network_from_mask(trained_net, net_tmp)
+        trained_net = net_tmp
+
+    net_name = str(int((1 - pruned_params) * 100)).zfill(3)
+    torch.save(trained_net, os.path.join(path, f"{net_name}.pth"))
+    results[net_name] = trained_net
+    trained_net, stats = train(trained_net, datasets, f"trained_{net_name}", save_path=path, **training_kwargs)
+    results["trained_" + net_name] = trained_net
+    return results
