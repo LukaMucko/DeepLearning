@@ -282,7 +282,7 @@ def train(net, net_type, datasets, experiment_name, optimizer="adam", lr=0.01, e
                 epoch_stats["valid_acc"][-1], epoch_stats["test_loss"][-1], epoch_stats["test_acc"][-1]))
         else:
             print(f"Epoch: {epoch}", ": ", end="")
-            print_training_results(epoch_stats)
+            print_training_results_model(epoch_stats)
 
     if early_stop_metric is not None:
         # model.load_state_dict(torch.load(os.path.join(path, f"{epoch-early_stop_patience}.pth")))
@@ -294,19 +294,19 @@ def train(net, net_type, datasets, experiment_name, optimizer="adam", lr=0.01, e
 
     save_training(model, path, epoch_stats, epochs)  # save last epoch and eventual change to epoch_stats
 
-    print_training_results(epoch_stats)
+    print_training_results_model(epoch_stats)
     torch.save(final_model, os.path.join(path, "final.pth"))
     return model, epoch_stats
 
 
-def print_training_results(epoch_stats):
+def print_training_results_model(epoch_stats):
     epoch = -1 if "early_stop_epoch" not in epoch_stats else epoch_stats["early_stop_epoch"] - 1
     print(f"train loss {epoch_stats['train_loss'][epoch]:.3f}, train acc {epoch_stats['train_acc'][epoch]:.3f}, "
           f"valid loss {epoch_stats['valid_loss'][epoch]:.3f}, valid acc {epoch_stats['valid_acc'][epoch]:.3f}, "
           f"test loss {epoch_stats['test_loss'][epoch]:.3f}, test acc {epoch_stats['test_acc'][epoch]:.3f}")
 
 
-def print_plot_results(epoch_stats, title):
+def print_plot_results_model(epoch_stats, title):
     epoch_stats_to_plot = {
         key: value for key, value in epoch_stats.items() if key != 'early_stop_epoch'}
     pd.DataFrame(epoch_stats, index=range(1, len(epoch_stats['train_loss']) + 1)
@@ -316,7 +316,7 @@ def print_plot_results(epoch_stats, title):
         plt.axvline(epoch_stats["early_stop_epoch"][-1], color="red", linestyle="--")
 
     print(title, ": ", end="")
-    print_training_results(epoch_stats)
+    print_training_results_model(epoch_stats)
 
 
 # -----------------------------------------------------------------------------
@@ -375,7 +375,7 @@ def prune_network_from_mask(net_in, net_out):
 
 def get_pruned_params(net, params_before):
     params_after = params_before - sum(torch.sum(b == 0) for b in net.buffers()).item()
-    return round(abs(1 - (params_after / params_before)), 2)
+    return round(abs(1 - (params_after / params_before)), 4)
 
 
 def random_pruning_training(net, net_type, datasets, experiment_folder_name, save_path="checkpoints",
@@ -393,19 +393,19 @@ def random_pruning_training(net, net_type, datasets, experiment_folder_name, sav
     if training_kwargs.get("epochs") is None:
         training_kwargs["epochs"] = get_num_epochs(net_type)
 
-    results = {}
+    results_model = {}
     for pruning_amount in pruning_targets:
-        net_name = str(int((1 - pruning_amount) * 100)).zfill(
-            3)  # makes the name of the network the percentage of weights remaining
+        net_name = "{:.2%}".format((1 - pruning_amount))[:-1].zfill(6)
+
         net_pruned = copy.deepcopy(net)
         prune_network(net_pruned, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
                       out_amount=out_amount)
         trained_net_pruned, stats = train(net_pruned, net_type, datasets, net_name, save_path=path, **training_kwargs)
 
         torch.save(trained_net_pruned, os.path.join(path, f"{net_name}.pth"))
-        results[net_name] = trained_net_pruned
+        results_model[net_name] = trained_net_pruned
 
-    return results
+    return results_model
 
 
 def one_shot_pruning_training(net, net_type, datasets, experiment_folder_name, save_path="checkpoints", retraining=True,
@@ -423,12 +423,11 @@ def one_shot_pruning_training(net, net_type, datasets, experiment_folder_name, s
     if training_kwargs.get("epochs") is None:
         training_kwargs["epochs"] = get_num_epochs(net_type)
 
-    trained_net, stats = train(net, net_type, datasets, "100", save_path=path, **training_kwargs)
+    trained_net, stats = train(net, net_type, datasets, "100.00", save_path=path, **training_kwargs)
 
-    results = {}
+    results_model = {}
     for pruning_amount in pruning_targets:
-        net_name = str(int((1 - pruning_amount) * 100)).zfill(
-            3)  # makes the name of the network the percentage of weights remaining
+        net_name = "{:.2%}".format((1 - pruning_amount))[:-1].zfill(6)
         net_pruned = copy.deepcopy(trained_net)
         prune_network(net_pruned, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
                       out_amount=out_amount)
@@ -436,15 +435,17 @@ def one_shot_pruning_training(net, net_type, datasets, experiment_folder_name, s
         net_pruned_reinit = copy.deepcopy(net)
         prune_network_from_mask(net_pruned, net_pruned_reinit)
         torch.save(net_pruned_reinit, os.path.join(path, f"{net_name}.pth"))
-        results[net_name] = net_pruned
+        results_model[net_name] = net_pruned
+
+
 
         if retraining:
             trained_net_pruned, stats = train(net_pruned, net_type, datasets, f"trained_{net_name}", save_path=path,
                                               **training_kwargs)
             torch.save(trained_net_pruned, os.path.join(path, f"trained_{net_name}.pth"))
-            results["trained_" + net_name] = trained_net_pruned
+            results_model["trained_" + net_name] = trained_net_pruned
 
-    return results
+    return results_model
 
 
 def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, save_path="checkpoints", reinit=False,
@@ -459,7 +460,8 @@ def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, 
         training_kwargs["epochs"] = get_num_epochs(net_type)
 
     total_params = sum(p.numel() for p in net.parameters())
-    trained_net, stats = train(net, net_type, datasets, "100", save_path=path, **training_kwargs)
+    
+    trained_net, stats = train(net, net_type, datasets, "100.00", save_path=path, **training_kwargs)
     prune_network(trained_net, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
                   out_amount=out_amount)
 
@@ -470,16 +472,18 @@ def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, 
 
     pruned_params = get_pruned_params(trained_net, total_params)
 
-    results = {}
+    results_model, results_stats = {}, {}
     while (1 - pruned_params) > pruning_target:
-        net_name = str(int((1 - pruned_params) * 100)).zfill(
-            3)  # makes the name of the network the percentage of weights remaining
-        results[net_name] = trained_net
-        torch.save(trained_net, os.path.join(path, f"{net_name}.pth"))
+        net_name = "{:.2%}".format((1 - pruned_params))[:-1].zfill(6)
+        results_model[net_name] = trained_net
+        # torch.save(trained_net, os.path.join(path, f"{net_name}.pth"))
 
         trained_net, stats = train(trained_net, net_type, datasets, f"trained_{net_name}", save_path=path, **training_kwargs)
-        results["trained_" + net_name] = trained_net
-        prune_network(net, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
+        results_model["trained_" + net_name] = trained_net
+        
+        save_epoch = -1 if "early_stop_epoch" not in stats.keys() else stats["early_stop_epoch"] - 1
+        results_stats["trained_" + net_name] = {key: value[save_epoch] for key, value in stats.items()}
+        prune_network(trained_net, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
                       out_amount=out_amount)
 
         if reinit:
@@ -494,8 +498,12 @@ def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, 
         trained_net = net_tmp
 
     net_name = str(int((1 - pruned_params) * 100)).zfill(3)
-    torch.save(trained_net, os.path.join(path, f"{net_name}.pth"))
-    results[net_name] = trained_net
+    # torch.save(trained_net, os.path.join(path, f"{net_name}.pth"))
+    results_model[net_name] = trained_net
     trained_net, stats = train(trained_net, net_type, datasets, f"trained_{net_name}", save_path=path, **training_kwargs)
-    results["trained_" + net_name] = trained_net
-    return results
+
+    save_epoch = -1 if "early_stop_epoch" not in stats.keys() else stats["early_stop_epoch"] - 1
+    results_stats["trained_" + net_name] = {key: value[save_epoch] for key, value in stats.items()}
+    results_model["trained_" + net_name] = trained_net
+
+    return results_model, results_stats
