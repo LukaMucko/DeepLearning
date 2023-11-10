@@ -16,8 +16,8 @@ train_data, valid_data, test_data = get_dataloaders(dataset_name)
 datasets = {"valid": valid_data, "test": test_data, "train": train_data}
 
 base_net = create_network(net_name, image_size=get_image_size(dataset_name))
-trained_net1, history1 = train(base_net, datasets, "simple_training_1", epochs=epochs, lr=lr, plot=False)
+trained_net1, history1 = train(base_net, net_name, datasets, "simple_training_1", epochs=epochs, lr=lr, plot=False)
 assert not (
         base_net.state_dict().__str__() == trained_net1.state_dict().__str__())  # check if the weights are the same
-trained_net2, history2 = train(base_net, datasets, "simple_training_2", epochs=epochs, lr=lr, plot=False)
+trained_net2, history2 = train(base_net, net_name, datasets, "simple_training_2", epochs=epochs, lr=lr, plot=False)
 

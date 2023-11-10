@@ -177,8 +177,8 @@ def get_lr_optimizer(net_name):
 # Training and testing loops
 # -----------------------------------------------------------------------------
 
-def load_network(experiment_name, lr, optimizer, save_path="checkpoints", device=d2l.try_gpu()):
-    path = os.path.join(os.getcwd(), save_path, f"{experiment_name}_{lr}_{optimizer}")
+def load_network(experiment_name, lr, optimizer, momentum=0, save_path="checkpoints", device=d2l.try_gpu()):
+    path = os.path.join(os.getcwd(), save_path, f"{experiment_name}_{lr}_{optimizer}_{momentum}")
     model = torch.load(os.path.join(path, "final.pth"), map_location=device)
     epoch_stats = pd.read_csv(os.path.join(path, "epoch_stats.csv"), index_col="epoch").to_dict(orient="list")
     return model, epoch_stats
@@ -227,10 +227,14 @@ def record_metrics(model, epoch_stats, datasets, loss_fn, device):
             eval_metric.reset()
 
 
-def train(net, datasets, experiment_name, optimizer="adam", lr=0.01, epochs=100, save_path="checkpoints",
+def train(net, net_type, datasets, experiment_name, optimizer="adam", lr=0.01, epochs=100, save_path="checkpoints",
           device=d2l.try_gpu(), momentum=0, plot=True, save_patience=2, early_stop_metric=None):
     path = os.path.join(os.getcwd(), save_path, f"{experiment_name}_{lr}_{optimizer}_{momentum}")
-    model = copy.deepcopy(net)  # todo: fix this
+
+    model = create_network(net_type)
+    prune_network_from_mask(net, model)
+    model.load_state_dict(net.state_dict())
+
     animator = None
     model.to(device)
 
@@ -277,7 +281,7 @@ def train(net, datasets, experiment_name, optimizer="adam", lr=0.01, epochs=100,
                 epoch_stats["train_loss"][-1], epoch_stats["train_acc"][-1], epoch_stats["valid_loss"][-1],
                 epoch_stats["valid_acc"][-1], epoch_stats["test_loss"][-1], epoch_stats["test_acc"][-1]))
         else:
-            print(f"Epoch: {epoch_stats}", ": ", end="")
+            print(f"Epoch: {epoch}", ": ", end="")
             print_training_results(epoch_stats)
 
     if early_stop_metric is not None:
@@ -349,8 +353,7 @@ def prune_network(net, net_type, amount, prune_type=prune.L1Unstructured, conv_a
     """
     Note: conv_amount and out_amount are modifier to amount
     """
-    local = net_type in ["lenet", "conv2", "conv4", "conv6"]
-    if local:
+    if net_type == "lenet":
         if conv_amount is None:
             conv_amount = 1
         if out_amount is None:
@@ -362,9 +365,9 @@ def prune_network(net, net_type, amount, prune_type=prune.L1Unstructured, conv_a
 
 def prune_network_from_mask(net_in, net_out):
     for layer_in, layer_out in zip(net_in.children(), net_out.children()):
-        if isinstance(layer_in, (torch.nn.Linear, torch.nn.Conv2d)):
+        if prune.is_pruned(layer_in) and isinstance(layer_in, (torch.nn.Linear, torch.nn.Conv2d)):
             prune.custom_from_mask(layer_out, name="weight", mask=layer_in.weight_mask)
-        elif isinstance(layer_in, ResidualBlock):
+        elif prune.is_pruned(layer_in) and isinstance(layer_in, ResidualBlock):
             for sublayer_in, sublayer_out in zip(layer_in.children(), layer_out.children()):
                 if isinstance(sublayer_in, (torch.nn.Linear, torch.nn.Conv2d)):
                     prune.custom_from_mask(sublayer_out, name="weight", mask=sublayer_in.weight_mask)
@@ -397,7 +400,7 @@ def random_pruning_training(net, net_type, datasets, experiment_folder_name, sav
         net_pruned = copy.deepcopy(net)
         prune_network(net_pruned, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
                       out_amount=out_amount)
-        trained_net_pruned, stats = train(net_pruned, datasets, net_name, save_path=path, **training_kwargs)
+        trained_net_pruned, stats = train(net_pruned, net_type, datasets, net_name, save_path=path, **training_kwargs)
 
         torch.save(trained_net_pruned, os.path.join(path, f"{net_name}.pth"))
         results[net_name] = trained_net_pruned
@@ -420,7 +423,7 @@ def one_shot_pruning_training(net, net_type, datasets, experiment_folder_name, s
     if training_kwargs.get("epochs") is None:
         training_kwargs["epochs"] = get_num_epochs(net_type)
 
-    trained_net, stats = train(net, datasets, "100", save_path=path, **training_kwargs)
+    trained_net, stats = train(net, net_type, datasets, "100", save_path=path, **training_kwargs)
 
     results = {}
     for pruning_amount in pruning_targets:
@@ -436,7 +439,7 @@ def one_shot_pruning_training(net, net_type, datasets, experiment_folder_name, s
         results[net_name] = net_pruned
 
         if retraining:
-            trained_net_pruned, stats = train(net_pruned, datasets, f"trained_{net_name}", save_path=path,
+            trained_net_pruned, stats = train(net_pruned, net_type, datasets, f"trained_{net_name}", save_path=path,
                                               **training_kwargs)
             torch.save(trained_net_pruned, os.path.join(path, f"trained_{net_name}.pth"))
             results["trained_" + net_name] = trained_net_pruned
@@ -456,7 +459,7 @@ def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, 
         training_kwargs["epochs"] = get_num_epochs(net_type)
 
     total_params = sum(p.numel() for p in net.parameters())
-    trained_net, stats = train(net, datasets, "100", save_path=path, **training_kwargs)
+    trained_net, stats = train(net, net_type, datasets, "100", save_path=path, **training_kwargs)
     prune_network(trained_net, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
                   out_amount=out_amount)
 
@@ -474,7 +477,7 @@ def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, 
         results[net_name] = trained_net
         torch.save(trained_net, os.path.join(path, f"{net_name}.pth"))
 
-        trained_net, stats = train(trained_net, datasets, f"trained_{net_name}", save_path=path, **training_kwargs)
+        trained_net, stats = train(trained_net, net_type, datasets, f"trained_{net_name}", save_path=path, **training_kwargs)
         results["trained_" + net_name] = trained_net
         prune_network(net, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
                       out_amount=out_amount)
@@ -493,6 +496,6 @@ def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, 
     net_name = str(int((1 - pruned_params) * 100)).zfill(3)
     torch.save(trained_net, os.path.join(path, f"{net_name}.pth"))
     results[net_name] = trained_net
-    trained_net, stats = train(trained_net, datasets, f"trained_{net_name}", save_path=path, **training_kwargs)
+    trained_net, stats = train(trained_net, net_type, datasets, f"trained_{net_name}", save_path=path, **training_kwargs)
     results["trained_" + net_name] = trained_net
     return results
