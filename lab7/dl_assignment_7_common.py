@@ -449,7 +449,7 @@ def one_shot_pruning_training(net, net_type, datasets, experiment_folder_name, s
 
 
 def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, save_path="checkpoints", reinit=False,
-                               pruning_amount=0.2, pruning_target=0.01, conv_amount=None, out_amount=None,
+                               pruning_amount=0.2, pruning_target=0.01, conv_amount=None, out_amount=None, reset=False,
                                prune_type=prune.L1Unstructured, **training_kwargs):
     path = os.path.join(os.getcwd(), save_path, f"{experiment_folder_name}")
     if not os.path.exists(path) or os.listdir(path) == []:
@@ -465,7 +465,7 @@ def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, 
     prune_network(trained_net, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
                   out_amount=out_amount)
 
-    if reinit:
+    if reset:
         net_tmp = copy.deepcopy(net)
         prune_network_from_mask(trained_net, net_tmp)
         trained_net = net_tmp
@@ -478,6 +478,15 @@ def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, 
         results_model[net_name] = trained_net
         # torch.save(trained_net, os.path.join(path, f"{net_name}.pth"))
 
+        if reinit:
+            net_tmp = create_network(net_type)
+            prune_network_from_mask(trained_net, net_tmp)
+            trained_reinit_net, stats = train(net_tmp, net_type, datasets, f"reinit_{net_name}", save_path=path,
+                                              **training_kwargs)
+            results_model["reinit_" + net_name] = trained_reinit_net
+            save_epoch = -1 if "early_stop_epoch" not in stats.keys() else stats["early_stop_epoch"] - 1
+            results_stats["reinit_" + net_name] = {key: value[save_epoch] for key, value in stats.items()}
+
         trained_net, stats = train(trained_net, net_type, datasets, f"trained_{net_name}", save_path=path, **training_kwargs)
         results_model["trained_" + net_name] = trained_net
         
@@ -486,13 +495,13 @@ def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, 
         prune_network(trained_net, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
                       out_amount=out_amount)
 
-        if reinit:
+        if reset:
             net_tmp = copy.deepcopy(net)
             prune_network_from_mask(trained_net, net_tmp)
             trained_net = net_tmp
         pruned_params = get_pruned_params(trained_net, total_params)
 
-    if not reinit:
+    if not reset:
         net_tmp = copy.deepcopy(net)
         prune_network_from_mask(trained_net, net_tmp)
         trained_net = net_tmp
