@@ -78,82 +78,12 @@ def create_lenet(image_size=28):
         torch.nn.Linear(100, 10)
     )
 
-
-class ResidualBlock(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, strides=1, padding='same'):
-        super().__init__()
-        self.conv1 = torch.nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=strides, padding=1)
-        self.batch1 = torch.nn.BatchNorm2d(out_channels)
-        self.conv2 = torch.nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding)
-        self.batch2 = torch.nn.BatchNorm2d(out_channels)
-
-        self.skip_connection = torch.nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=strides,
-                                               padding=0)
-        self.batch_res = torch.nn.BatchNorm2d(out_channels)
-
-    def forward(self, X):
-        Y = torch.nn.functional.relu(self.batch1(self.conv1(X)))
-        Y = self.batch2(self.conv2(Y))
-        Y += self.batch_res(self.skip_connection(X))
-        return torch.nn.functional.relu(Y)
-
-
 def create_resnet_18(image_size=32):
     return models.resnet18(pretrained=False, num_classes=10)
-    # return torch.nn.Sequential(
-    #     torch.nn.Conv2d(3, 16, kernel_size=(3, 3), padding=1, stride=2), torch.nn.ReLU(),
-    #     torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
-    #
-    #     ResidualBlock(16, 16),
-    #     ResidualBlock(16, 16),
-    #     ResidualBlock(16, 16),
-    #
-    #     ResidualBlock(16, 32, strides=2),
-    #     ResidualBlock(32, 32),
-    #     ResidualBlock(32, 32),
-    #
-    #     ResidualBlock(32, 64, strides=2),
-    #     ResidualBlock(64, 64),
-    #     ResidualBlock(64, 64),
-    #
-    #     torch.nn.AvgPool2d(kernel_size=(2, 2), stride=(2, 2)),
-    #     torch.nn.Flatten(),
-    #     torch.nn.Linear(int((image_size / 32) ** 2 * 64), 10),
-    # )
 
 
 def create_vgg_19(image_size=32):
     return models.vgg19(pretrained=False, num_classes=10)
-    # return torch.nn.Sequential(
-    #     torch.nn.Conv2d(3, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.Conv2d(64, 64, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
-    #
-    #     torch.nn.Conv2d(64, 128, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.Conv2d(128, 128, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
-    #
-    #     torch.nn.Conv2d(128, 256, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.Conv2d(256, 256, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.Conv2d(256, 256, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.Conv2d(256, 256, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
-    #
-    #     torch.nn.Conv2d(256, 512, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.Conv2d(512, 512, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.Conv2d(512, 512, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.Conv2d(512, 512, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
-    #
-    #     torch.nn.Conv2d(512, 512, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.Conv2d(512, 512, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.Conv2d(512, 512, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #     torch.nn.Conv2d(512, 512, kernel_size=(3, 3), padding='same'), torch.nn.ReLU(),
-    #
-    #     torch.nn.AvgPool2d(kernel_size=(2, 2), stride=(2, 2)),
-    #     torch.nn.Flatten(),
-    #     torch.nn.Linear(int((image_size / 32) ** 2 * 512), 10),
-    # )
 
 
 def create_network(arch, **kwargs):
@@ -231,7 +161,7 @@ def record_metrics(model, epoch_stats, datasets, loss_fn, device):
 
 
 def train(net, net_type, datasets, experiment_name, optimizer="adam", lr=0.01, epochs=100, save_path="checkpoints",
-          device=d2l.try_gpu(), momentum=0, plot=True, save_patience=2, early_stop_metric=None, early_stop_patience=5):
+          device=d2l.try_gpu(), momentum=0, plot=True, save_patience=2, early_stop_metric=None):
     path = os.path.join(os.getcwd(), save_path, f"{experiment_name}_{lr}_{optimizer}_{momentum}")
 
     model = create_network(net_type).to(device)
@@ -286,22 +216,15 @@ def train(net, net_type, datasets, experiment_name, optimizer="adam", lr=0.01, e
             print(f"Epoch: {epoch}", ": ", end="")
             print_training_results_model(epoch_stats)
 
-        if early_stop_metric is not None and epoch > early_stop_patience:
-            if early_stop_metric in ["valid_acc", "test_acc"]:
-                best_epoch = (np.argmax(epoch_stats[early_stop_metric][save_patience - 1::save_patience])
-                              + 1) * save_patience
-                stop = best_epoch + early_stop_patience < epoch
-            else:
-                best_epoch = (np.argmin(epoch_stats[early_stop_metric][save_patience - 1::save_patience])
-                              + 1) * save_patience
-                stop = best_epoch + early_stop_patience < epoch
-            if stop or epoch == epochs:
-                # model.load_state_dict(torch.load(os.path.join(path, f"{epoch-early_stop_patience}.pth")))
-                epoch_stats['early_stop_epoch'] = [best_epoch] * epoch
-                final_model.load_state_dict(torch.load(os.path.join(path, f"{epoch_stats['early_stop_epoch'][-1]}.pth"))
-                                            ["model_state_dict"])
-                save_training(model, path, epoch_stats, epoch)  # save last epoch and eventual change to epoch_stats
-                break
+    if early_stop_metric is not None:
+        # model.load_state_dict(torch.load(os.path.join(path, f"{epoch-early_stop_patience}.pth")))
+        best_epoch_find = np.argmax if early_stop_metric in ["valid_acc", "test_acc"] else np.argmin
+        epoch_stats['early_stop_epoch'] = (best_epoch_find(epoch_stats[early_stop_metric]
+                                                           [save_patience - 1::save_patience]) + 1) * save_patience
+        final_model.load_state_dict(torch.load(os.path.join(path, f"{epoch_stats['early_stop_epoch'][-1]}.pth"))
+                                    ["model_state_dict"])
+
+    save_training(model, path, epoch_stats, epochs)  # save last epoch and eventual change to epoch_stats
 
 
     print_training_results_model(epoch_stats)
@@ -388,76 +311,6 @@ def prune_network_from_mask(net_in, net_out):
 def get_pruned_params(net, params_before):
     params_after = params_before - sum(torch.sum(b == 0) for b in net.buffers()).item()
     return round(abs(1 - (params_after / params_before)), 4)
-
-
-def random_pruning_training(net, net_type, datasets, experiment_folder_name, save_path="checkpoints",
-                            pruning_targets=None, conv_amount=None, out_amount=None,
-                            prune_type=prune.RandomUnstructured, **training_kwargs):
-    if pruning_targets is None:
-        pruning_targets = [0.2]
-    elif type(pruning_targets) is not list:
-        pruning_targets = [pruning_targets]
-    path = os.path.join(os.getcwd(), save_path, f"{experiment_folder_name}")
-
-    if not os.path.exists(path):
-        os.mkdir(path)
-
-    if training_kwargs.get("epochs") is None:
-        training_kwargs["epochs"] = get_num_epochs(net_type)
-
-    results_model = {}
-    for pruning_amount in pruning_targets:
-        net_name = "{:.2%}".format((1 - pruning_amount))[:-1].zfill(6)
-
-        net_pruned = copy.deepcopy(net)
-        prune_network(net_pruned, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
-                      out_amount=out_amount)
-        trained_net_pruned, stats = train(net_pruned, net_type, datasets, net_name, save_path=path, **training_kwargs)
-
-        torch.save(trained_net_pruned, os.path.join(path, f"{net_name}.pth"))
-        results_model[net_name] = trained_net_pruned
-
-    return results_model
-
-
-def one_shot_pruning_training(net, net_type, datasets, experiment_folder_name, save_path="checkpoints", retraining=True,
-                              pruning_targets=None, conv_amount=None, out_amount=None, prune_type=prune.L1Unstructured,
-                              **training_kwargs):
-    if pruning_targets is None:
-        pruning_targets = [0.2]
-    elif type(pruning_targets) is not list:
-        pruning_targets = [pruning_targets]
-    path = os.path.join(os.getcwd(), save_path, f"{experiment_folder_name}")
-
-    if not os.path.exists(path):
-        os.mkdir(path)
-
-    if training_kwargs.get("epochs") is None:
-        training_kwargs["epochs"] = get_num_epochs(net_type)
-
-    trained_net, stats = train(net, net_type, datasets, "100.00", save_path=path, **training_kwargs)
-
-    results_model = {}
-    for pruning_amount in pruning_targets:
-        net_name = "{:.2%}".format((1 - pruning_amount))[:-1].zfill(6)
-        net_pruned = copy.deepcopy(trained_net)
-        prune_network(net_pruned, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
-                      out_amount=out_amount)
-
-        net_pruned_reinit = copy.deepcopy(net)
-        prune_network_from_mask(net_pruned, net_pruned_reinit)
-        torch.save(net_pruned_reinit, os.path.join(path, f"{net_name}.pth"))
-        results_model[net_name] = net_pruned
-
-
-
-        if retraining:
-            trained_net_pruned, stats = train(net_pruned, net_type, datasets, f"trained_{net_name}", save_path=path,
-                                              **training_kwargs)
-            torch.save(trained_net_pruned, os.path.join(path, f"trained_{net_name}.pth"))
-            results_model["trained_" + net_name] = trained_net_pruned
-
-    return results_model
 
 
 def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, save_path="checkpoints", reinit=False,
