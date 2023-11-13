@@ -254,7 +254,7 @@ def train(net, net_type, datasets, experiment_name, optimizer="adam", lr=0.01, e
 
     model, epoch_stats, start_epoch = resume_training(model, path, epochs)
 
-    if start_epoch > epochs:
+    if start_epoch > epochs or "early_stop_epoch" in epoch_stats.keys():
         return model, epoch_stats
 
     if plot:
@@ -288,21 +288,21 @@ def train(net, net_type, datasets, experiment_name, optimizer="adam", lr=0.01, e
 
         if early_stop_metric is not None and epoch > early_stop_patience:
             if early_stop_metric in ["valid_acc", "test_acc"]:
-                best_epoch_find = np.argmax
-                stop = epoch_stats[early_stop_metric][-early_stop_patience - 1] > epoch_stats[early_stop_metric][-1]
+                best_epoch = (np.argmax(epoch_stats[early_stop_metric][save_patience - 1::save_patience])
+                              + 1) * save_patience
+                stop = best_epoch + early_stop_patience < epoch
             else:
-                best_epoch_find = np.argmin
-                stop = epoch_stats[early_stop_metric][-early_stop_patience - 1] < epoch_stats[early_stop_metric][-1]
-            if stop:
+                best_epoch = (np.argmin(epoch_stats[early_stop_metric][save_patience - 1::save_patience])
+                              + 1) * save_patience
+                stop = best_epoch + early_stop_patience < epoch
+            if stop or epoch == epochs:
                 # model.load_state_dict(torch.load(os.path.join(path, f"{epoch-early_stop_patience}.pth")))
-                epoch_stats['early_stop_epoch'] = \
-                    [(best_epoch_find(epoch_stats[early_stop_metric][save_patience - 1::save_patience])
-                      + 1) * save_patience] * epochs
-                final_model.load_state_dict(torch.load(os.path.join(path, f"{epoch_stats['early_stop_epoch']}.pth"))
+                epoch_stats['early_stop_epoch'] = [best_epoch] * epoch
+                final_model.load_state_dict(torch.load(os.path.join(path, f"{epoch_stats['early_stop_epoch'][-1]}.pth"))
                                             ["model_state_dict"])
+                save_training(model, path, epoch_stats, epoch)  # save last epoch and eventual change to epoch_stats
                 break
 
-    save_training(model, path, epoch_stats, epochs)  # save last epoch and eventual change to epoch_stats
 
     print_training_results_model(epoch_stats)
     torch.save(final_model, os.path.join(path, "final.pth"))
@@ -351,10 +351,11 @@ def global_prune(net, amount, prune_type, layer_type_to_prune=torch.nn.Conv2d):
     for layer in net.children():
         if isinstance(layer, layer_type_to_prune):
             parameters.append((layer, "weight"))
-        elif isinstance(layer, ResidualBlock):
-            for sub_layer_name, sub_layer in layer.named_children():
-                if isinstance(sub_layer, layer_type_to_prune):
-                    parameters.append((sub_layer, "weight"))
+        elif isinstance(layer, torch.nn.Sequential):
+            for basic_block in layer.children():
+                for sub_layer_name, sub_layer in basic_block.named_children():
+                    if isinstance(sub_layer, layer_type_to_prune):
+                        parameters.append((sub_layer, "weight"))
 
     prune.global_unstructured(parameters, prune_type, amount=amount)
 
@@ -377,10 +378,11 @@ def prune_network_from_mask(net_in, net_out):
     for layer_in, layer_out in zip(net_in.children(), net_out.children()):
         if prune.is_pruned(layer_in) and isinstance(layer_in, (torch.nn.Linear, torch.nn.Conv2d)):
             prune.custom_from_mask(layer_out, name="weight", mask=layer_in.weight_mask)
-        elif prune.is_pruned(layer_in) and isinstance(layer_in, ResidualBlock):
-            for sublayer_in, sublayer_out in zip(layer_in.children(), layer_out.children()):
-                if isinstance(sublayer_in, (torch.nn.Linear, torch.nn.Conv2d)):
-                    prune.custom_from_mask(sublayer_out, name="weight", mask=sublayer_in.weight_mask)
+        elif prune.is_pruned(layer_in) and isinstance(layer_in, torch.nn.Sequential):
+            for basic_block_in, basic_block_out in zip(layer_in.children(), layer_out.children()):
+                for sublayer_in, sublayer_out in zip(basic_block_in.children(), basic_block_out.children()):
+                    if isinstance(sublayer_in, (torch.nn.Linear, torch.nn.Conv2d)):
+                        prune.custom_from_mask(sublayer_out, name="weight", mask=sublayer_in.weight_mask)
 
 
 def get_pruned_params(net, params_before):
@@ -494,22 +496,17 @@ def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, 
         if reinit:
             net_tmp = create_network(net_type).to(training_kwargs["device"])
             prune_network_from_mask(trained_net, net_tmp)
-            trained_reinit_net, stats = train(
-                net_tmp, net_type, datasets, f"reinit_{net_name}", save_path=path, **training_kwargs)
+            trained_reinit_net, stats = train(net_tmp, net_type, datasets, f"reinit_{net_name}", save_path=path, **training_kwargs)
+
             results_model["reinit_" + net_name] = trained_reinit_net
-            print(stats)
-            save_epoch = - \
-                1 if "early_stop_epoch" not in stats.keys(
-                ) else stats["early_stop_epoch"][-1] - 1
-            print(save_epoch)
+            save_epoch = - 1 if "early_stop_epoch" not in stats.keys() else stats["early_stop_epoch"][-1] - 1
             results_stats["reinit_" + net_name] = {
                 key: value[save_epoch] for key, value in stats.items()}
 
-        trained_net, stats = train(trained_net, net_type, datasets,
-                                   f"trained_{net_name}", save_path=path, **training_kwargs)
+        trained_net, stats = train(trained_net, net_type, datasets, f"trained_{net_name}", save_path=path, **training_kwargs)
         results_model["trained_" + net_name] = trained_net
 
-        save_epoch = -1 if "early_stop_epoch" not in stats.keys() else stats["early_stop_epoch"] - 1
+        save_epoch = -1 if "early_stop_epoch" not in stats.keys() else stats["early_stop_epoch"][-1] - 1
         results_stats["trained_" + net_name] = {key: value[save_epoch] for key, value in stats.items()}
         prune_network(trained_net, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
                       out_amount=out_amount)
@@ -518,6 +515,7 @@ def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, 
             net_tmp = copy.deepcopy(net).to(training_kwargs["device"])
             prune_network_from_mask(trained_net, net_tmp)
             trained_net = net_tmp
+        print(net_name)
         pruned_params = get_pruned_params(trained_net, total_params)
 
     if not reset:
@@ -525,7 +523,7 @@ def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, 
         prune_network_from_mask(trained_net, net_tmp)
         trained_net = net_tmp
 
-    net_name = str(int((1 - pruned_params) * 100)).zfill(3)
+    net_name = "{:.2%}".format((1 - pruned_params))[:-1].zfill(6)
     # torch.save(trained_net, os.path.join(path, f"{net_name}.pth"))
     results_model[net_name] = trained_net
     trained_net, stats = train(trained_net, net_type, datasets, f"trained_{net_name}", save_path=path, **training_kwargs)
