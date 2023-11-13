@@ -494,16 +494,22 @@ def iterative_pruning_training(net, net_type, datasets, experiment_folder_name, 
         if reinit:
             net_tmp = create_network(net_type).to(training_kwargs["device"])
             prune_network_from_mask(trained_net, net_tmp)
-            trained_reinit_net, stats = train(net_tmp, net_type, datasets, f"reinit_{net_name}", save_path=path,
-                                              **training_kwargs)
+            trained_reinit_net, stats = train(
+                net_tmp, net_type, datasets, f"reinit_{net_name}", save_path=path, **training_kwargs)
             results_model["reinit_" + net_name] = trained_reinit_net
-            save_epoch = -1 if "early_stop_epoch" not in stats.keys() else stats["early_stop_epoch"][-1] - 1
-            results_stats["reinit_" + net_name] = {key: value[save_epoch] for key, value in stats.items()}
+            print(stats)
+            save_epoch = - \
+                1 if "early_stop_epoch" not in stats.keys(
+                ) else stats["early_stop_epoch"][-1] - 1
+            print(save_epoch)
+            results_stats["reinit_" + net_name] = {
+                key: value[save_epoch] for key, value in stats.items()}
 
-        trained_net, stats = train(trained_net, net_type, datasets, f"trained_{net_name}", save_path=path, **training_kwargs)
+        trained_net, stats = train(trained_net, net_type, datasets,
+                                   f"trained_{net_name}", save_path=path, **training_kwargs)
         results_model["trained_" + net_name] = trained_net
 
-        save_epoch = -1 if "early_stop_epoch" not in stats.keys() else stats["early_stop_epoch"][-1] - 1
+        save_epoch = -1 if "early_stop_epoch" not in stats.keys() else stats["early_stop_epoch"] - 1
         results_stats["trained_" + net_name] = {key: value[save_epoch] for key, value in stats.items()}
         prune_network(trained_net, net_type, pruning_amount, prune_type=prune_type, conv_amount=conv_amount,
                       out_amount=out_amount)
