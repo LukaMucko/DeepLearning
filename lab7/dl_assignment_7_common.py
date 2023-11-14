@@ -213,8 +213,9 @@ def train(net, net_type, datasets, experiment_name, optimizer="adam", lr=0.01, e
                 epoch_stats["train_loss"][-1], epoch_stats["train_acc"][-1], epoch_stats["valid_loss"][-1],
                 epoch_stats["valid_acc"][-1], epoch_stats["test_loss"][-1], epoch_stats["test_acc"][-1]))
         else:
-            print(f"Epoch: {epoch}", ": ", end="")
-            print_training_results_model(epoch_stats)
+            #print(f"Epoch: {epoch}", ": ", end="")
+            #print_training_results_model(epoch_stats)
+            pass
 
     if early_stop_metric is not None:
         # model.load_state_dict(torch.load(os.path.join(path, f"{epoch-early_stop_patience}.pth")))
@@ -227,7 +228,7 @@ def train(net, net_type, datasets, experiment_name, optimizer="adam", lr=0.01, e
     save_training(model, path, epoch_stats, epochs)  # save last epoch and eventual change to epoch_stats
 
 
-    print_training_results_model(epoch_stats)
+    #print_training_results_model(epoch_stats)
     torch.save(final_model, os.path.join(path, "final.pth"))
     return model, epoch_stats
 
@@ -242,7 +243,7 @@ def print_training_results_model(epoch_stats):
 def print_plot_results_model(epoch_stats, title):
     epoch_stats_to_plot = {
         key: value for key, value in epoch_stats.items() if key != 'early_stop_epoch'}
-    pd.DataFrame(epoch_stats, index=range(1, len(epoch_stats['train_loss']) + 1)
+    pd.DataFrame(epoch_stats_to_plot, index=range(1, len(epoch_stats['train_loss']) + 1)
                  ).plot(xlabel="epoch", ylabel="metric value", title=title, grid=True)
 
     if "early_stop_epoch" in epoch_stats:
